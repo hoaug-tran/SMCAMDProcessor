@@ -95,7 +95,7 @@ pmDispatch_t pmRyzen_cpuFuncs = {
     .markAllCPUsOff = 0,
     .pmSetRunCount = 0,
     .pmIsCPUUnAvailable = 0,
-    .pmChooseCPU = &pmRyzen_choose_cpu,
+    .pmChooseCPU = 0,
     .pmIPIHandler = 0,
     .pmThreadTellUrgency = 0,
     .pmActiveRTThreads = 0,
@@ -104,13 +104,6 @@ pmDispatch_t pmRyzen_cpuFuncs = {
 };
 
 void pmRyzen_init_PState(){
-    uint64_t p0 = pmRyzen_rdmsr_safe(pmRyzen_io_service_handle, MSR_PSTATE_0);
-    float p0spd = (p0 & 0xff) / ((p0 >> 8) & 0x1f) * 200.0F;
-    
-    uint64_t p1 = pmRyzen_rdmsr_safe(pmRyzen_io_service_handle, MSR_PSTATE_0 + 1);
-    uint64_t p1fid = (uint64_t)((p0spd * 0.80F) / 200.0F * (float)((p1 >> 8) & 0x1f));
-    
-    wrmsr64(MSR_PSTATE_0 + 1, (p1 & ~0xFFULL) | p1fid | (1ULL << 63));
 }
 
 inline void set_PState(pmProcessor_t *cpu, uint8_t state){
@@ -159,8 +152,12 @@ void pmRyzen_init(void *handle){
     
     pmCallBacks_t cb;
     if(*kernelDisp)(*pmRyzen_pmUnRegister)(*kernelDisp);
-    pmKextRegister(PM_DISPATCH_VERSION, &pmRyzen_cpuFuncs, &cb);
-//    pmKextRegister(PM_DISPATCH_VERSION, NULL, &cb);
+    extern boolean_t PE_parse_boot_argn(const char *arg_string, void *arg_ptr, int max_len);
+    if (PE_parse_boot_argn("-amdpmenable", NULL, 0)) {
+        pmKextRegister(PM_DISPATCH_VERSION, &pmRyzen_cpuFuncs, &cb);
+    } else {
+        pmKextRegister(PM_DISPATCH_VERSION, NULL, &cb);
+    }
     
     x86_pkg_t * pkg = cb.GetPkgRoot();
     int pkgCount = 0;
@@ -288,10 +285,7 @@ uint64_t pmRyzen_machine_idle(uint64_t maxDur){
     
 #elif PMRYZEN_IDLE_IO_CSTATE
     
-    __asm__ volatile("sti;"
-                     "inw $0xf2, %%ax;"
-                     "cli;"
-                     :::"%eax");
+    __asm__ volatile("sti; hlt;");
     
 #endif
 

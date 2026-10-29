@@ -473,7 +473,7 @@ IOReturn AMDRyzenCPUPMUserClient::externalMethod(uint32_t selector, IOExternalMe
             arguments->structureOutputSize = (uint32_t)strlen(str);
             
             char *dataOut = (char*) arguments->structureOutput;
-            strcpy(dataOut, str, strlen(str));
+            strncpy(dataOut, str, arguments->structureOutputSize);
             
             
             break;

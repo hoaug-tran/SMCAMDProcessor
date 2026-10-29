@@ -91,13 +91,41 @@ bool AMDRyzenCPUPowerManagement::getPCIService(){
         return false;
     }
     
+    IOPCIDevice *rootBridge = nullptr;
+    IOPCIDevice *amdBridge = nullptr;
+    IOPCIDevice *anyAmd = nullptr;
+    
     while (true){
         OSObject *obj = service_iter->getNextObject();
         if(!obj) break;
         
-        service = OSDynamicCast(IOPCIDevice, obj);
-        break;
+        IOPCIDevice *dev = OSDynamicCast(IOPCIDevice, obj);
+        if(!dev) continue;
+        
+        IOPCIAddressSpace space;
+        space.bits = 0;
+        uint16_t vendor = dev->configRead16(space, 0x00);
+        if(vendor != 0x1022) continue;
+        
+        uint32_t rev_class = dev->configRead32(space, 0x08);
+        uint32_t class_code = rev_class >> 8;
+        
+        if((class_code >> 8) == 0x0600){
+            rootBridge = dev;
+            break;
+        }
+        
+        if((class_code >> 8) == 0x0604 && !amdBridge){
+            amdBridge = dev;
+        }
+        
+        if(!anyAmd){
+            anyAmd = dev;
+        }
     }
+    service_iter->release();
+    
+    service = rootBridge ? rootBridge : (amdBridge ? amdBridge : anyAmd);
     
     if(!service){
         IOLog("AMDCPUSupport::getPCIService: unable to get IOPCIDevice on host system.\n");
@@ -123,8 +151,6 @@ void AMDRyzenCPUPowerManagement::initWorkLoop() {
             //Disable interrupts and sync all processor cores.
             mp_rendezvous_no_intrs([](void *obj) {
                 auto provider = static_cast<AMDRyzenCPUPowerManagement*>(obj);
-                
-                provider->write_msr(kMSR_CSTATE_ADDR, 0xf0);
                 
 //                uint64_t val = 0;
 //                provider->read_msr(0xC0010292, &val);
@@ -171,34 +197,37 @@ void AMDRyzenCPUPowerManagement::initWorkLoop() {
         }
         
         
-        mp_rendezvous_no_intrs([](void *obj) {
-            auto provider = static_cast<AMDRyzenCPUPowerManagement*>(obj);
-            uint32_t cpu_num = cpu_number();
+        uint32_t now = uint32_t(getCurrentTimeNs() / 1000000); //ms
+        bool clientActive = (now - provider->timeOfLastMissedRequest < 3000);
 
-            provider->updateInstructionDelta(cpu_num);
+        if (clientActive) {
+            mp_rendezvous_no_intrs([](void *obj) {
+                auto provider = static_cast<AMDRyzenCPUPowerManagement*>(obj);
+                uint32_t cpu_num = cpu_number();
 
-            // Ignore hyper-threaded cores
-            if(!pmRyzen_cpu_primary_in_core(cpu_num)) return;
-            uint8_t physical = pmRyzen_cpu_phys_num(cpu_num);
+                provider->updateInstructionDelta(cpu_num);
 
+                // Ignore hyper-threaded cores
+                if(!pmRyzen_cpu_primary_in_core(cpu_num)) return;
+                uint8_t physical = pmRyzen_cpu_phys_num(cpu_num);
 
-            provider->calculateEffectiveFrequency(physical);
+                provider->calculateEffectiveFrequency(physical);
 
-        }, provider);
+            }, provider);
+
+            uint32_t newInt = max(now - provider->timeOfLastMissedRequest,
+                                  provider->estimatedRequestTimeInterval);
+            provider->updateTimeInterval = min(1200, max(50, newInt));
+        } else {
+            provider->updateTimeInterval = 1500;
+        }
         
         //Read stats from package.
         provider->updatePackageTemp();
         provider->updatePackageEnergy();
         
-
-        
-        uint32_t now = uint32_t(getCurrentTimeNs() / 1000000); //ms
-        uint32_t newInt = max(now - provider->timeOfLastMissedRequest,
-                              provider->estimatedRequestTimeInterval);
-
         provider->actualUpdateTimeInterval = now - provider->timeOfLastUpdate;
         provider->timeOfLastUpdate = now;
-        provider->updateTimeInterval = min(1200, max(50, newInt));
         
         provider->timerEvent_main->setTimeoutMS(provider->updateTimeInterval);
 
@@ -421,6 +450,13 @@ IOReturn AMDRyzenCPUPowerManagement::setPowerState(unsigned long powerStateOrdin
         // Waking up
         IOLog("AMDCPUSupport::setPowerState preparing for wakeup\n");
         wentToSleep = false;
+        
+        lastUpdateTime = getCurrentTimeNs();
+        pwrLastTSC = rdtsc64();
+        lastUpdateEnergyValue = 0;
+        timeOfLastUpdate = uint32_t(getCurrentTimeNs() / 1000000);
+        timeOfLastMissedRequest = 0;
+        
         resumeWorkLoop();
     }
 
@@ -615,12 +651,17 @@ bool AMDRyzenCPUPowerManagement::getCPBState(){
 }
 
 inline float AMDRyzenCPUPowerManagement::getPackageTemp() {
+    if(!fIOPCIDevice) return (PACKAGE_TEMPERATURE_perPackage[0] > 0 ? PACKAGE_TEMPERATURE_perPackage[0] : 45.0f);
+    
     IOPCIAddressSpace space;
     space.bits = 0x00;
     
     fIOPCIDevice->configWrite32(space, (UInt8)kFAMILY_17H_PCI_CONTROL_REGISTER, (UInt32)kF17H_M01H_THM_TCON_CUR_TMP);
     uint32_t temperature = fIOPCIDevice->configRead32(space, kFAMILY_17H_PCI_CONTROL_REGISTER + 4);
     
+    if (temperature == 0xFFFFFFFF || temperature == 0) {
+        return (PACKAGE_TEMPERATURE_perPackage[0] > 0 ? PACKAGE_TEMPERATURE_perPackage[0] : 45.0f);
+    }
     
     bool tempOffsetFlag = (temperature & kF17H_TEMP_OFFSET_FLAG) != 0;
     temperature = (temperature >> 21) * 125;
@@ -631,6 +672,10 @@ inline float AMDRyzenCPUPowerManagement::getPackageTemp() {
     
     if (tempOffsetFlag)
         t -= 49.0f;
+    
+    if (t <= 0.0f || t > 120.0f) {
+        return (PACKAGE_TEMPERATURE_perPackage[0] > 0 ? PACKAGE_TEMPERATURE_perPackage[0] : 45.0f);
+    }
     
     return t;
 }
