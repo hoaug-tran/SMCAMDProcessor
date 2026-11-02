@@ -152,12 +152,7 @@ void pmRyzen_init(void *handle){
     
     pmCallBacks_t cb;
     if(*kernelDisp)(*pmRyzen_pmUnRegister)(*kernelDisp);
-    extern boolean_t PE_parse_boot_argn(const char *arg_string, void *arg_ptr, int max_len);
-    if (PE_parse_boot_argn("-amdpmenable", NULL, 0)) {
-        pmKextRegister(PM_DISPATCH_VERSION, &pmRyzen_cpuFuncs, &cb);
-    } else {
-        pmKextRegister(PM_DISPATCH_VERSION, NULL, &cb);
-    }
+    pmKextRegister(PM_DISPATCH_VERSION, &pmRyzen_cpuFuncs, &cb);
     
     x86_pkg_t * pkg = cb.GetPkgRoot();
     int pkgCount = 0;
@@ -303,37 +298,16 @@ uint64_t pmRyzen_machine_idle(uint64_t maxDur){
 
     if(self->eff_timeacc > pmRyzen_effective_timetsc){
 //        self->eff_load = 1 - (float)self->eff_idleacc / (float)self->eff_timeacc;
-        uint64_t rt = self->eff_timeacc - self->eff_idleacc;
-        
-        //Avoid using xmm registers shared within same core.
-        if(rt > pmRyzen_p_sutsc){
+        if(self->PState != 0){
             set_PState(self, 0);
-            self->ll_count = 0;
-        } else if(rt < pmRyzen_p_sdtsc){
-            self->ll_count++;
-            if(self->ll_count > PSTATE_STEPDOWN_TIME + pmRyzen_hpcpus * PSTATE_STEPDOWN_MP_GAIN){
-                self->ll_count = 0;
-                set_PState(self, self->PState+1);
-            }
         }
+        self->ll_count = 0;
         
 //        self->eff_load = 1 - (float)self->eff_idleacc / (float)self->eff_timeacc;
         self->eff_idleaccd = self->eff_idleacc;
         self->eff_timeaccd = self->eff_timeacc;
         self->eff_timeacc = 0;
         self->eff_idleacc = 0;
-
-        
-//        if(self->eff_load > PSTATE_STEPUP_THRE){
-//            set_PState(self, 0);
-//            self->ll_count = 0;
-//        } else if(self->eff_load < PSTATE_STEPDOWN_THRE){
-//            self->ll_count++;
-//            if(self->ll_count > PSTATE_STEPDOWN_TIME){
-//                set_PState(self, self->PState+1);
-//            }
-//        }
-
     }
 
     self->last_start_tsc = tscnow;

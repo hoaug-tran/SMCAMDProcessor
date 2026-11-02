@@ -300,7 +300,7 @@ bool AMDRyzenCPUPowerManagement::start(IOService *provider){
     
     CPUInfo::getCpuid(1, 0, &cpuid_eax, &cpuid_ebx, &cpuid_ecx, &cpuid_edx);
     cpuFamily = ((cpuid_eax >> 20) & 0xff) + ((cpuid_eax >> 8) & 0xf);
-    cpuModel = ((cpuid_eax >> 16) & 0xf) + ((cpuid_eax >> 4) & 0xf);
+    cpuModel = (((cpuid_eax >> 16) & 0xf) << 4) | ((cpuid_eax >> 4) & 0xf);
     
     //Only 17h Family are supported offically by now.
     // EDIT: add check bypass for 19h Zen 3 processors
@@ -458,6 +458,8 @@ IOReturn AMDRyzenCPUPowerManagement::setPowerState(unsigned long powerStateOrdin
         timeOfLastMissedRequest = 0;
         
         resumeWorkLoop();
+        timerEvent_main->setTimeoutMS(1);
+        timerEvent_tempe->setTimeoutMS(HF_TEMP_SAMPLE_PERIOD);
     }
 
     return kIOPMAckImplied;
@@ -549,11 +551,11 @@ void AMDRyzenCPUPowerManagement::calculateEffectiveFrequency(uint8_t physical){
      *  instructions.
      * • Core::X86::Msr::MPERF and Core::X86::Msr::APERF are invalid if an overflow occurs.
     */
-    __asm__ volatile("movl $0xe8, %%ecx;"
+    __asm__ volatile("movl $0xe7, %%ecx;"
                      "rdmsr;"
                      "movl %%eax, %0;"
                      "movl %%edx, %1;"
-                     "movl $0xe7, %%ecx;"
+                     "movl $0xe8, %%ecx;"
                      "rdmsr;"
                      : "=r"(APERF_lo), "=r"(APERF_hi), "=a"(MPERF_lo), "=d"(MPERF_hi)
                      :
@@ -561,7 +563,7 @@ void AMDRyzenCPUPowerManagement::calculateEffectiveFrequency(uint8_t physical){
                     );
     
     uint64_t APERF = APERF_lo | ((uint64_t)APERF_hi << 32);
-    uint64_t MPERF = MPERF_lo | ((uint64_t)MPERF_hi << 32);;
+    uint64_t MPERF = MPERF_lo | ((uint64_t)MPERF_hi << 32);
         
     uint64_t lastAPERF = lastAPERF_perCore[physical];
     uint64_t lastMPERF = lastMPERF_perCore[physical];
@@ -700,7 +702,6 @@ void AMDRyzenCPUPowerManagement::updatePackageEnergy(){
 
     double seconds = (ctsc - pwrLastTSC) / (double)(xnuTSCFreq);
     double e = (pwrEnergyUnit * energyDelta) / (seconds);
-    e *= pwrTimeUnit * 1000;
     uniPackageEnergy = e;
 
 
