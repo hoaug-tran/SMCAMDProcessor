@@ -132,7 +132,7 @@ void pmRyzen_doPState_reset(){
 
 void pmRyzen_PState_reset(){
     pmRyzen_hpcpus = 0;
-    if(pmRyzen_pstatelimit == 0) pmRyzen_pstatelimit = 1;
+    if(pmRyzen_pstatelimit == 0) return;
     mp_rendezvous_no_intrs(&pmRyzen_doPState_reset, NULL);
 }
 
@@ -152,7 +152,7 @@ void pmRyzen_init(void *handle){
     
     pmCallBacks_t cb;
     if(*kernelDisp)(*pmRyzen_pmUnRegister)(*kernelDisp);
-    pmKextRegister(PM_DISPATCH_VERSION, &pmRyzen_cpuFuncs, &cb);
+    pmKextRegister(PM_DISPATCH_VERSION, NULL, &cb);
     
     x86_pkg_t * pkg = cb.GetPkgRoot();
     int pkgCount = 0;
@@ -160,7 +160,7 @@ void pmRyzen_init(void *handle){
     pmRyzen_num_phys = 0;
     pmRyzen_num_logi = 0;
     pmRyzen_hpcpus = 0;
-    pmRyzen_pstatelimit = PSTATE_LIMIT;
+    pmRyzen_pstatelimit = 0;
     
     while(pkg){
         pkgCount++;
