@@ -217,7 +217,7 @@ void AMDRyzenCPUPowerManagement::initWorkLoop() {
 
             uint32_t newInt = max(now - provider->timeOfLastMissedRequest,
                                   provider->estimatedRequestTimeInterval);
-            provider->updateTimeInterval = min(1200, max(50, newInt));
+            provider->updateTimeInterval = min(1200, max(200, newInt));
         } else {
             provider->updateTimeInterval = 1500;
         }
@@ -551,11 +551,11 @@ void AMDRyzenCPUPowerManagement::calculateEffectiveFrequency(uint8_t physical){
      *  instructions.
      * • Core::X86::Msr::MPERF and Core::X86::Msr::APERF are invalid if an overflow occurs.
     */
-    __asm__ volatile("movl $0xe7, %%ecx;"
+    __asm__ volatile("movl $0xe8, %%ecx;"
                      "rdmsr;"
                      "movl %%eax, %0;"
                      "movl %%edx, %1;"
-                     "movl $0xe8, %%ecx;"
+                     "movl $0xe7, %%ecx;"
                      "rdmsr;"
                      : "=r"(APERF_lo), "=r"(APERF_hi), "=a"(MPERF_lo), "=d"(MPERF_hi)
                      :
